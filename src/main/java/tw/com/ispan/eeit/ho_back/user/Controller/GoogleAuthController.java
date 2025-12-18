@@ -48,13 +48,13 @@ public class GoogleAuthController {
     String backPath;
 
     @Value("${google.client.id}")
-    String clientId;
+    private String clientId;
 
     @Value("${google.redirect.uri}")
-    String redirectUri;
-    
+    private String redirectUri;
+
     @Value("${google.client.secret}")
-    String clientSecret;
+    private String clientSecret;
 
     // 將使用者導向 Google 登入
     @GetMapping("google/login")

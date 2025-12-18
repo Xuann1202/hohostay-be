@@ -17,13 +17,17 @@ public class CorsConfig {
     public CorsFilter corsFilter() {
         CorsConfiguration config = new CorsConfiguration();
 
-        // 允許的來源（前端應用的地址）
-        config.addAllowedOrigin("http://192.168.25.152:3000");
-        config.addAllowedOrigin("http://127.0.0.1:3000");
-        config.addAllowedOrigin("http://192.168.25.152:5173"); // Vite 默認端口
-        config.addAllowedOrigin("http://127.0.0.1:5173");
+        // // 允許的來源（前端應用的地址）DEMO
+        // config.addAllowedOrigin("http://192.168.25.152:3000");
+        // config.addAllowedOrigin("http://127.0.0.1:3000");
+        // config.addAllowedOrigin("http://192.168.25.152:5173"); // Vite 默認端口
+        // config.addAllowedOrigin("http://127.0.0.1:5173");
+        // config.addAllowedOrigin("http://192.168.25.152:5173");
 
-        config.addAllowedOrigin("http://192.168.25.152:5173");
+        //  新增本地前端 URL
+        config.addAllowedOrigin("http://localhost:3000");
+        config.addAllowedOrigin("http://localhost:5173");
+        config.addAllowedOrigin("http://localhost:8080"); // 如果前端也跑在 8080
 
         // 允許的 HTTP 方法
         config.addAllowedMethod("GET");
