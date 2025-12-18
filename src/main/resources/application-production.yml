@@ -1,0 +1,24 @@
+spring:
+  # 資料庫連線設定（生產環境）
+  datasource:
+    url: jdbc:sqlserver://192.168.25.152:1433;databaseName=HotelBookingDB;encrypt=true;trustServerCertificate=true;characterEncoding=UTF-8;sendStringParametersAsUnicode=true
+    # 建議使用環境變數，不要硬編碼密碼
+    username: ${DB_USERNAME:sa}
+    password: ${DB_PASSWORD:}
+    driver-class-name: com.microsoft.sqlserver.jdbc.SQLServerDriver
+
+  # Spring Data JPA 設定（生產環境）
+  jpa:
+    hibernate:
+      ddl-auto: none  # 生產環境絕對不要使用 update/create
+    show-sql: false  # 生產環境關閉 SQL 日誌以提高效能
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.SQLServerDialect
+        # 生產環境不格式化 SQL（提高效能）
+
+
+  # 輸出設定（生產環境）
+  output:
+    ansi:
+      enabled: never  # 生產環境不需要 ANSI 顏色輸出
