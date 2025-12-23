@@ -108,6 +108,135 @@ public class HotelServiceImpl implements HotelService {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * 批量載入的照片和設施資料（優化 N+1 問題）
+     */
+    private static class BatchData {
+        final Map<Integer, List<PhotoDTO>> photosByHotelId;
+        final Map<Integer, List<Integer>> facilityIdsByHotelId;
+
+        BatchData(Map<Integer, List<PhotoDTO>> photosByHotelId, Map<Integer, List<Integer>> facilityIdsByHotelId) {
+            this.photosByHotelId = photosByHotelId;
+            this.facilityIdsByHotelId = facilityIdsByHotelId;
+        }
+    }
+
+    /**
+     * 批量載入照片和設施資料（優化 N+1 問題）
+     * 
+     * @param hotelIds 飯店 ID 列表
+     * @return 包含照片和設施 Map 的 BatchData 對象
+     */
+    private BatchData loadPhotosAndFacilitiesBatch(List<Integer> hotelIds) {
+        // 批量查詢所有照片（1 次查詢）
+        List<Photo> allPhotos = photoRepository.findByHotelIdIn(hotelIds);
+        
+        // 批量查詢所有設施（1 次查詢）
+        List<HotelFacility> allFacilities = hotelFacilityRepository.findByHotelIdIn(hotelIds);
+        
+        // 將照片按 hotelId 分組並轉換為 DTO
+        Map<Integer, List<PhotoDTO>> photosByHotelId = allPhotos.stream()
+                .collect(Collectors.groupingBy(
+                        p -> p.getHotel().getId(),
+                        Collectors.mapping(p -> {
+                            PhotoDTO photoDto = new PhotoDTO();
+                            photoDto.setId(p.getId());
+                            photoDto.setUrl(p.getUrl());
+                            photoDto.setIsCover(p.getIsCover());
+                            photoDto.setDisplayOrder(p.getDisplayOrder());
+                            return photoDto;
+                        }, Collectors.toList())
+                ));
+        
+        // 將設施按 hotelId 分組並提取 facilityId
+        Map<Integer, List<Integer>> facilityIdsByHotelId = allFacilities.stream()
+                .collect(Collectors.groupingBy(
+                        hf -> hf.getHotel().getId(),
+                        Collectors.mapping(hf -> hf.getFacility().getId(), Collectors.toList())
+                ));
+        
+        return new BatchData(photosByHotelId, facilityIdsByHotelId);
+    }
+
+    /**
+     * 將 Hotel Entity 轉換為 DTO（使用預載入的 Map，優化 N+1 問題）
+     * 
+     * @param h 飯店 Entity
+     * @param photosByHotelId 按 hotelId 分組的照片 Map
+     * @param facilityIdsByHotelId 按 hotelId 分組的設施 ID Map
+     * @return HotelDTO
+     */
+    private HotelDTO toDto(Hotel h, Map<Integer, List<PhotoDTO>> photosByHotelId,
+            Map<Integer, List<Integer>> facilityIdsByHotelId) {
+        if (h == null)
+            return null;
+        HotelDTO dto = new HotelDTO();
+
+        dto.setId(h.getId());
+        dto.setName(h.getName());
+        dto.setLicense(h.getLicense());
+        dto.setPhone(h.getPhone());
+        dto.setLocalCall(h.getLocalCall());
+        dto.setDescription(h.getDescription());
+
+        dto.setStarRating(h.getStarRating() == null ? null : h.getStarRating());
+
+        dto.setCheckInTime(h.getCheckInTime());
+        dto.setCheckOutTime(h.getCheckOutTime());
+        dto.setAddress(h.getAddress());
+
+        dto.setLatitude(h.getLatitude() == null ? null : h.getLatitude().doubleValue());
+        dto.setLongitude(h.getLongitude() == null ? null : h.getLongitude().doubleValue());
+
+        dto.setBusinessStatus(h.getBusinessStatus());
+
+        // 設置外鍵 ID
+        if (h.getDistrict() != null) {
+            dto.setDistrictId(h.getDistrict().getId());
+
+            // 設置完整的 District 對象（包含 City 信息）
+            DistrictDTO districtDto = new DistrictDTO();
+            districtDto.setId(h.getDistrict().getId());
+            districtDto.setName(h.getDistrict().getName());
+
+            // 設置 City 信息
+            if (h.getDistrict().getCity() != null) {
+                CityDTO cityDto = new CityDTO();
+                cityDto.setId(h.getDistrict().getCity().getId());
+                cityDto.setName(h.getDistrict().getCity().getName());
+                districtDto.setCity(cityDto);
+            }
+
+            dto.setDistrict(districtDto);
+        }
+
+        if (h.getHotelType() != null) {
+            dto.setHotelTypeId(h.getHotelType().getId());
+
+            // 設置完整的 HotelType 對象
+            HotelTypeDTO hotelTypeDto = new HotelTypeDTO();
+            hotelTypeDto.setId(h.getHotelType().getId());
+            hotelTypeDto.setType(h.getHotelType().getType());
+            dto.setHotelType(hotelTypeDto);
+        }
+
+        // 從 Map 中獲取照片（不查詢資料庫）
+        List<PhotoDTO> photoList = photosByHotelId.getOrDefault(h.getId(), new ArrayList<>());
+        dto.setPhotos(photoList);
+
+        // 從 Map 中獲取設施 ID 列表（不查詢資料庫）
+        List<Integer> facilityIds = facilityIdsByHotelId.getOrDefault(h.getId(), new ArrayList<>());
+        dto.setFacilityIds(facilityIds);
+
+        return dto;
+    }
+
+    /**
+     * 將 Hotel Entity 轉換為 DTO（單一飯店查詢時使用，會單獨查詢照片和設施）
+     * 
+     * @param h 飯店 Entity
+     * @return HotelDTO
+     */
     private HotelDTO toDto(Hotel h) {
         if (h == null)
             return null;
@@ -451,8 +580,14 @@ public class HotelServiceImpl implements HotelService {
             return new ArrayList<>();
         }
 
+        // 批量載入照片和設施（優化 N+1 問題）
+        List<Integer> hotelIds = hotels.stream()
+                .map(Hotel::getId)
+                .collect(Collectors.toList());
+        BatchData batchData = loadPhotosAndFacilitiesBatch(hotelIds);
+
         return hotels.stream()
-                .map(this::toDto)
+                .map(h -> toDto(h, batchData.photosByHotelId, batchData.facilityIdsByHotelId))
                 .collect(Collectors.toList());
     }
 
@@ -472,6 +607,12 @@ public class HotelServiceImpl implements HotelService {
             return result;
         }
 
+        // 批量載入照片和設施（優化 N+1 問題）
+        List<Integer> hotelIds = allHotels.stream()
+                .map(Hotel::getId)
+                .collect(Collectors.toList());
+        BatchData batchData = loadPhotosAndFacilitiesBatch(hotelIds);
+
         // 手動分頁處理
         int totalElements = allHotels.size();
         int totalPages = (int) Math.ceil((double) totalElements / size);
@@ -480,7 +621,7 @@ public class HotelServiceImpl implements HotelService {
         List<HotelDTO> hotelDTOs = allHotels.stream()
                 .skip(start)
                 .limit(size)
-                .map(this::toDto)
+                .map(h -> toDto(h, batchData.photosByHotelId, batchData.facilityIdsByHotelId))
                 .collect(Collectors.toList());
 
         Map<String, Object> result = new HashMap<>();
@@ -515,6 +656,12 @@ public class HotelServiceImpl implements HotelService {
             return result;
         }
 
+        // 批量載入照片和設施（優化 N+1 問題）
+        List<Integer> hotelIds = allHotels.stream()
+                .map(Hotel::getId)
+                .collect(Collectors.toList());
+        BatchData batchData = loadPhotosAndFacilitiesBatch(hotelIds);
+
         // 手動分頁處理
         int totalElements = allHotels.size();
         int totalPages = (int) Math.ceil((double) totalElements / size);
@@ -523,7 +670,7 @@ public class HotelServiceImpl implements HotelService {
         List<HotelDTO> hotelDTOs = allHotels.stream()
                 .skip(start)
                 .limit(size)
-                .map(this::toDto)
+                .map(h -> toDto(h, batchData.photosByHotelId, batchData.facilityIdsByHotelId))
                 .collect(Collectors.toList());
 
         Map<String, Object> result = new HashMap<>();
@@ -615,6 +762,12 @@ public class HotelServiceImpl implements HotelService {
                     .collect(Collectors.toList());
         }
 
+        // 批量載入照片和設施（優化 N+1 問題）
+        List<Integer> hotelIds = allHotels.stream()
+                .map(Hotel::getId)
+                .collect(Collectors.toList());
+        BatchData batchData = loadPhotosAndFacilitiesBatch(hotelIds);
+
         // 手動分頁處理
         int totalElements = allHotels.size();
         int totalPages = (int) Math.ceil((double) totalElements / size);
@@ -623,7 +776,7 @@ public class HotelServiceImpl implements HotelService {
         List<HotelDTO> hotelDTOs = allHotels.stream()
                 .skip(start)
                 .limit(size)
-                .map(this::toDto)
+                .map(h -> toDto(h, batchData.photosByHotelId, batchData.facilityIdsByHotelId))
                 .collect(Collectors.toList());
 
         Map<String, Object> result = new HashMap<>();
@@ -720,6 +873,12 @@ public class HotelServiceImpl implements HotelService {
                     .collect(Collectors.toList());
         }
 
+        // 批量載入照片和設施（優化 N+1 問題）
+        List<Integer> hotelIds = allHotels.stream()
+                .map(Hotel::getId)
+                .collect(Collectors.toList());
+        BatchData batchData = loadPhotosAndFacilitiesBatch(hotelIds);
+
         // 手動分頁處理
         int totalElements = allHotels.size();
         int totalPages = (int) Math.ceil((double) totalElements / size);
@@ -728,7 +887,7 @@ public class HotelServiceImpl implements HotelService {
         List<HotelDTO> hotelDTOs = allHotels.stream()
                 .skip(start)
                 .limit(size)
-                .map(this::toDto)
+                .map(h -> toDto(h, batchData.photosByHotelId, batchData.facilityIdsByHotelId))
                 .collect(Collectors.toList());
 
         Map<String, Object> result = new HashMap<>();
